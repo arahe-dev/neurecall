@@ -188,6 +188,10 @@ def _handle_post_board_layout(handler) -> None:
         return
     mode = body.get("mode", "grid")
     scope = body.get("scope")
+    valid_modes = {"grid", "radial", "hierarchy", "force", "concentric", "spiral"}
+    if mode not in valid_modes:
+        _json_response(handler, 400, {"ok": False, "error": f"Unknown mode. Use one of: {valid_modes}"})
+        return
     eng = get_engine()
     with _engine_lock:
         layout_state(eng.state, mode=mode, scope=scope)

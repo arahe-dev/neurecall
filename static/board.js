@@ -399,7 +399,12 @@ document.getElementById('btn-connect').addEventListener('click', () => setMode('
 document.getElementById('btn-pan').addEventListener('click', () => setMode('pan'));
 document.getElementById('btn-create').addEventListener('click', () => createNodeAtCenter());
 document.getElementById('btn-group').addEventListener('click', () => groupSelected());
-document.getElementById('btn-layout').addEventListener('click', () => autoLayout());
+document.getElementById('btn-layout').addEventListener('click', () => autoLayout('grid'));
+document.getElementById('btn-radial').addEventListener('click', () => autoLayout('radial'));
+document.getElementById('btn-hierarchy').addEventListener('click', () => autoLayout('hierarchy'));
+document.getElementById('btn-force').addEventListener('click', () => autoLayout('force'));
+document.getElementById('btn-concentric').addEventListener('click', () => autoLayout('concentric'));
+document.getElementById('btn-spiral').addEventListener('click', () => autoLayout('spiral'));
 document.getElementById('btn-refresh').addEventListener('click', () => loadBoard());
 
 // ---------------------------------------------------------------------------
@@ -426,8 +431,8 @@ async function groupSelected() {
   });
 }
 
-async function autoLayout() {
-  await api('POST', '/board/layout', { mode: 'grid' });
+async function autoLayout(mode = 'grid') {
+  await api('POST', '/board/layout', { mode });
   await loadBoard();
 }
 
@@ -542,7 +547,12 @@ window.addEventListener('keydown', (e) => {
     case 'h': setMode('pan'); break;
     case 'n': createNodeAtCenter(); break;
     case 'g': groupSelected(); break;
-    case 'l': autoLayout(); break;
+    case '1': autoLayout('grid'); break;
+    case '2': autoLayout('radial'); break;
+    case '3': autoLayout('hierarchy'); break;
+    case '4': autoLayout('force'); break;
+    case '5': autoLayout('concentric'); break;
+    case '6': autoLayout('spiral'); break;
     case 'r': loadBoard(); break;
     case 'Delete':
     case 'Backspace':

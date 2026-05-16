@@ -43,8 +43,9 @@ html, body {
   flex-direction: column;
   align-items: center;
   padding: 8px 0;
-  gap: 8px;
+  gap: 6px;
   z-index: 10;
+  overflow-y: auto;
 }
 #toolbar button {
   width: 40px;

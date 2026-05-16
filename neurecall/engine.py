@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import re
 import time
@@ -565,11 +566,214 @@ def layout_grid(state: GraphState, scope: list[str] | None = None, spacing: int 
     return patch
 
 
+def layout_radial(state: GraphState, scope: list[str] | None = None, ring_gap: int = 160, center_id: str | None = None) -> dict:
+    """Radial layout: center node at origin, others in concentric rings by BFS depth."""
+    targets = scope or [nid for nid, n in state.nodes.items() if not n.get("deleted")]
+    if not targets:
+        return {}
+
+    # Build adjacency
+    adj: dict[str, set[str]] = {nid: set() for nid in targets}
+    for edge in state.edges.values():
+        if edge["from"] in adj and edge["to"] in adj:
+            adj[edge["from"]].add(edge["to"])
+            adj[edge["to"]].add(edge["from"])
+
+    # BFS from center
+    center = center_id if center_id and center_id in targets else targets[0]
+    depths: dict[str, int] = {center: 0}
+    queue = [center]
+    for nid in queue:
+        for nb in adj[nid]:
+            if nb not in depths:
+                depths[nb] = depths[nid] + 1
+                queue.append(nb)
+    # Unreachable nodes get max depth + 1
+    max_d = max(depths.values()) if depths else 0
+    for nid in targets:
+        if nid not in depths:
+            depths[nid] = max_d + 1
+
+    patch: dict[str, dict] = {}
+    patch[center] = {"x": 0, "y": 0}
+    # Group by depth
+    rings: dict[int, list[str]] = {}
+    for nid, d in depths.items():
+        rings.setdefault(d, []).append(nid)
+
+    for d, nids in rings.items():
+        if d == 0:
+            continue
+        radius = d * ring_gap
+        count = len(nids)
+        for i, nid in enumerate(nids):
+            angle = (2 * 3.14159265 * i) / count - 3.14159265 / 2  # start at top
+            patch[nid] = {"x": radius * __import__("math").cos(angle), "y": radius * __import__("math").sin(angle)}
+    return patch
+
+
+def layout_hierarchy(state: GraphState, scope: list[str] | None = None, level_gap: int = 140, sibling_gap: int = 160, root_id: str | None = None) -> dict:
+    """Top-down tree layout using BFS levels."""
+    targets = scope or [nid for nid, n in state.nodes.items() if not n.get("deleted")]
+    if not targets:
+        return {}
+
+    adj: dict[str, set[str]] = {nid: set() for nid in targets}
+    for edge in state.edges.values():
+        if edge["from"] in adj and edge["to"] in adj:
+            adj[edge["from"]].add(edge["to"])
+            adj[edge["to"]].add(edge["from"])
+
+    root = root_id if root_id and root_id in targets else targets[0]
+    depths: dict[str, int] = {root: 0}
+    queue = [root]
+    for nid in queue:
+        for nb in adj[nid]:
+            if nb not in depths:
+                depths[nb] = depths[nid] + 1
+                queue.append(nb)
+    for nid in targets:
+        if nid not in depths:
+            depths[nid] = max(depths.values()) + 1
+
+    levels: dict[int, list[str]] = {}
+    for nid, d in depths.items():
+        levels.setdefault(d, []).append(nid)
+
+    patch: dict[str, dict] = {}
+    for d, nids in levels.items():
+        y = d * level_gap
+        total_w = (len(nids) - 1) * sibling_gap
+        start_x = -total_w / 2
+        for i, nid in enumerate(nids):
+            patch[nid] = {"x": start_x + i * sibling_gap, "y": y}
+    return patch
+
+
+def layout_force(state: GraphState, scope: list[str] | None = None, iterations: int = 300, repulsion: float = 8000, attraction: float = 0.003, damping: float = 0.85) -> dict:
+    """Simple force-directed layout. Nodes repel, edges attract."""
+    targets = scope or [nid for nid, n in state.nodes.items() if not n.get("deleted")]
+    if not targets:
+        return {}
+
+    # Initial positions from current layout or random
+    positions: dict[str, list[float]] = {}
+    for i, nid in enumerate(targets):
+        if nid in state.layouts:
+            positions[nid] = [float(state.layouts[nid]["x"]), float(state.layouts[nid]["y"])]
+        else:
+            angle = 2 * math.pi * i / len(targets)
+            positions[nid] = [math.cos(angle) * 200, math.sin(angle) * 200]
+
+    # Edge list
+    edges_list = [(e["from"], e["to"]) for e in state.edges.values() if e["from"] in positions and e["to"] in positions]
+
+    for _ in range(iterations):
+        forces: dict[str, list[float]] = {nid: [0.0, 0.0] for nid in targets}
+
+        # Repulsion
+        for i, a in enumerate(targets):
+            for b in targets[i + 1:]:
+                dx = positions[a][0] - positions[b][0]
+                dy = positions[a][1] - positions[b][1]
+                dist_sq = dx * dx + dy * dy + 1.0
+                fx = repulsion * dx / dist_sq
+                fy = repulsion * dy / dist_sq
+                forces[a][0] += fx
+                forces[a][1] += fy
+                forces[b][0] -= fx
+                forces[b][1] -= fy
+
+        # Attraction along edges
+        for a, b in edges_list:
+            dx = positions[b][0] - positions[a][0]
+            dy = positions[b][1] - positions[a][1]
+            dist = math.sqrt(dx * dx + dy * dy) + 0.1
+            fx = attraction * dist * dx / dist
+            fy = attraction * dist * dy / dist
+            forces[a][0] += fx
+            forces[a][1] += fy
+            forces[b][0] -= fx
+            forces[b][1] -= fy
+
+        # Apply with damping
+        for nid in targets:
+            positions[nid][0] += forces[nid][0] * damping
+            positions[nid][1] += forces[nid][1] * damping
+
+    # Center
+    cx = sum(p[0] for p in positions.values()) / len(positions)
+    cy = sum(p[1] for p in positions.values()) / len(positions)
+
+    patch: dict[str, dict] = {}
+    for nid, (x, y) in positions.items():
+        patch[nid] = {"x": round(x - cx, 1), "y": round(y - cy, 1)}
+    return patch
+
+
+def layout_concentric_groups(state: GraphState, scope: list[str] | None = None, group_gap: int = 200, node_gap: float = 0.35) -> dict:
+    """Each group gets its own concentric ring. Ungrouped nodes in center."""
+    targets = scope or [nid for nid, n in state.nodes.items() if not n.get("deleted")]
+    if not targets:
+        return {}
+
+    # Build membership
+    node_to_group: dict[str, str] = {}
+    group_nodes: dict[str, list[str]] = {}
+    for gid, group in state.groups.items():
+        vids = [nid for nid in group.get("node_ids", []) if nid in targets]
+        if vids:
+            group_nodes[gid] = vids
+            for nid in vids:
+                node_to_group[nid] = gid
+
+    ungrouped = [nid for nid in targets if nid not in node_to_group]
+
+    patch: dict[str, dict] = {}
+    # Ungrouped at center
+    for i, nid in enumerate(ungrouped):
+        angle = 2 * 3.14159265 * i / max(len(ungrouped), 1) - 3.14159265 / 2
+        r = 80
+        patch[nid] = {"x": r * math.cos(angle), "y": r * math.sin(angle)}
+
+    # Each group on its own ring
+    for ring_i, (gid, nids) in enumerate(group_nodes.items()):
+        radius = (ring_i + 1) * group_gap + 80
+        count = len(nids)
+        for i, nid in enumerate(nids):
+            angle = (2 * math.pi * i) / max(count, 1) + ring_i * 0.5  # offset each group
+            patch[nid] = {"x": radius * math.cos(angle), "y": radius * math.sin(angle)}
+    return patch
+
+
+def layout_spiral(state: GraphState, scope: list[str] | None = None, a: float = 30, b: float = 15) -> dict:
+    """Archimedean spiral: r = a + b * theta."""
+    targets = scope or [nid for nid, n in state.nodes.items() if not n.get("deleted")]
+    patch: dict[str, dict] = {}
+    for i, nid in enumerate(targets):
+        theta = 0.5 * math.sqrt(i + 1)
+        r = a + b * theta
+        patch[nid] = {"x": r * math.cos(theta), "y": r * math.sin(theta)}
+    return patch
+
+
 def layout_state(state: GraphState, mode: str = "grid", scope: list[str] | None = None) -> GraphState:
     """Apply a layout mode and return updated state."""
+    import math
+    patch: dict[str, dict] = {}
     if mode == "grid":
         patch = layout_grid(state, scope)
-        state.layouts.update(patch)
+    elif mode == "radial":
+        patch = layout_radial(state, scope)
+    elif mode == "hierarchy":
+        patch = layout_hierarchy(state, scope)
+    elif mode == "force":
+        patch = layout_force(state, scope)
+    elif mode == "concentric":
+        patch = layout_concentric_groups(state, scope)
+    elif mode == "spiral":
+        patch = layout_spiral(state, scope)
+    state.layouts.update(patch)
     return state
 
 
